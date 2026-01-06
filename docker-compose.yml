@@ -1,0 +1,134 @@
+version: '3.8'
+
+services:
+  # --- TiDB Cluster ---
+  pd:
+    image: pingcap/pd:v6.5.0
+    ports:
+      - "2379:2379"
+    volumes:
+      - pd_data:/data
+    command:
+      - --name=pd
+      - --client-urls=http://0.0.0.0:2379
+      - --peer-urls=http://0.0.0.0:2380
+      - --advertise-client-urls=http://pd:2379
+      - --advertise-peer-urls=http://pd:2380
+      - --initial-cluster=pd=http://pd:2380
+      - --data-dir=/data/pd
+      - --log-file=/data/pd.log
+
+  tikv:
+    image: pingcap/tikv:v6.5.0
+    volumes:
+      - tikv_data:/data
+    command:
+      - --addr=0.0.0.0:20160
+      - --advertise-addr=tikv:20160
+      - --data-dir=/data/tikv
+      - --pd=pd:2379
+      - --log-file=/data/tikv.log
+    depends_on:
+      - pd
+
+  tidb:
+    image: pingcap/tidb:v6.5.0
+    ports:
+      - "4000:4000"
+      - "10080:10080"
+    volumes:
+      - tidb_data:/data
+    command:
+      - --store=tikv
+      - --path=pd:2379
+      - --log-file=/data/tidb.log
+    depends_on:
+      - tikv
+
+  # --- TiDB CDC (Part 3) ---
+  ticdc:
+    image: pingcap/ticdc:v6.5.0
+    depends_on:
+      - pd
+      - tikv
+    command:
+      - /cdc
+      - server
+      - --pd=http://pd:2379
+      - --addr=0.0.0.0:8300
+      - --advertise-addr=ticdc:8300
+      - --log-file=/data/ticdc.log
+    # We will configure the changefeed task manually or via script after startup
+
+    # --- Kafka (Confluent) ---
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.4.0
+    ports:
+      - "2181:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+
+  kafka:
+    image: confluentinc/cp-kafka:7.4.0
+    depends_on:
+      - zookeeper
+    ports:
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:29092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+  # --- App Services ---
+  server:
+    build: ./server
+    ports:
+      - "3000:3000"
+    environment:
+      - DB_HOST=tidb
+      - DB_PORT=4000
+      - DB_USER=root
+      - DB_PASSWORD=
+      - DB_NAME=helfy_db
+    depends_on:
+      - tidb
+      - kafka
+    restart: always
+
+  client:
+    build: ./client
+    ports:
+      - "80:80"
+    depends_on:
+      - server
+
+  consumer:
+    build: ./consumer
+    depends_on:
+      - kafka
+    restart: always
+
+  cdc-init:
+    image: pingcap/ticdc:v6.5.0
+    command: >
+      sh -c "/scripts/cdc-task.sh"
+    volumes:
+      - ./cdc-task.sh:/scripts/cdc-task.sh
+    depends_on:
+      - ticdc
+      - kafka
+
+volumes:
+  pd_data:
+  tikv_data:
+  tidb_data:
+  zookeeper_data:
+  kafka_data:
