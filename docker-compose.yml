@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # --- TiDB Cluster ---
   pd:
@@ -17,6 +15,7 @@ services:
       - --initial-cluster=pd=http://pd:2380
       - --data-dir=/data/pd
       - --log-file=/data/pd.log
+    restart: always
 
   tikv:
     image: pingcap/tikv:v6.5.0
@@ -30,6 +29,7 @@ services:
       - --log-file=/data/tikv.log
     depends_on:
       - pd
+    restart: always
 
   tidb:
     image: pingcap/tidb:v6.5.0
@@ -44,6 +44,7 @@ services:
       - --log-file=/data/tidb.log
     depends_on:
       - tikv
+    restart: always
 
   # --- TiDB CDC (Part 3) ---
   ticdc:
@@ -58,6 +59,7 @@ services:
       - --addr=0.0.0.0:8300
       - --advertise-addr=ticdc:8300
       - --log-file=/data/ticdc.log
+    restart: always
     # We will configure the changefeed task manually or via script after startup
 
     # --- Kafka (Confluent) ---
@@ -70,6 +72,7 @@ services:
       ZOOKEEPER_TICK_TIME: 2000
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
+    restart: always
 
   kafka:
     image: confluentinc/cp-kafka:7.4.0
@@ -86,6 +89,7 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
     volumes:
       - kafka_data:/var/lib/kafka/data
+    restart: always
 
   # --- App Services ---
   server:
